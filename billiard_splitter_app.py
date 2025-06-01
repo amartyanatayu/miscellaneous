@@ -1,85 +1,118 @@
 import streamlit as st
+import pandas as pd
 
 st.set_page_config(page_title="Billiard Bill Splitter", layout="centered")
-
 st.title("🎱 Billiard Bill Splitter")
-st.markdown("Split your billiard bill fairly among friends with different sessions and food.")
 
-# --- Setup Rates ---
-st.header("1. Set Rates per Minute")
+st.markdown("""
+This tool helps you split billiard table + food + service charges + tax fairly between people.
+""")
 
-with st.form("rate_form"):
-    reg_day = st.number_input("Regular - Day", min_value=0.0, value=670.0)
-    reg_night = st.number_input("Regular - Night", min_value=0.0, value=840.0)
-    vip_day = st.number_input("VIP - Day", min_value=0.0, value=1000.0)
-    vip_night = st.number_input("VIP - Night", min_value=0.0, value=1200.0)
-    submitted_rates = st.form_submit_button("Confirm Rates")
+# --- Input: Rate Declaration ---
+st.header("📋 Set Table Rates")
+table_types = ["Reg", "VIP"]
+shifts = ["Day", "Night"]
+custom_rates = {}
 
-if submitted_rates:
-    rates = {
-        "reg": {"day": reg_day, "night": reg_night},
-        "vip": {"day": vip_day, "night": vip_night}
-    }
-    st.success("Rates saved!")
+for t_type in table_types:
+    for shift in shifts:
+        key = f"{t_type}_{shift}"
+        rate = st.number_input(f"Rate for {t_type} - {shift} (Rp/min):", min_value=0, key=f"rate_{key}")
+        custom_rates[key] = rate
 
-# --- Input People ---
-people_data = []
-st.header("2. Add People and Their Sessions")
+# --- Input: Participants ---
+st.header("👥 People & Food")
+num_people = st.number_input("Number of People:", min_value=1, step=1, key="num_people")
 
-num_people = st.number_input("How many people?", min_value=1, step=1, value=2)
+people = {}
 
-for i in range(int(num_people)):
-    with st.expander(f"Person {i+1} Info"):
+for i in range(num_people):
+    with st.expander(f"Person {i+1} Details"):
         name = st.text_input(f"Name of Person {i+1}", key=f"name_{i}")
-        num_sessions = st.number_input(f"Number of Sessions for {name}", min_value=1, step=1, key=f"sess_{i}")
-        sessions = []
-        for j in range(int(num_sessions)):
-            st.markdown(f"**Session {j+1}**")
-            table_type = st.selectbox("Table Type", ["reg", "vip"], key=f"type_{i}_{j}")
-            shift = st.selectbox("Shift", ["day", "night"], key=f"shift_{i}_{j}")
-            minutes = st.number_input("Minutes Played", min_value=1.0, step=1.0, key=f"min_{i}_{j}")
-            sessions.append({"table_type": table_type, "shift": shift, "minutes": minutes})
-
-        st.markdown("**Food & Drinks**")
         food_items = []
-        num_food = st.number_input(f"Number of items for {name}", min_value=0, step=1, key=f"food_{i}")
-        for k in range(int(num_food)):
-            item = st.text_input(f"Item {k+1} name", key=f"item_{i}_{k}")
-            price = st.number_input(f"Item {k+1} price", min_value=0.0, key=f"price_{i}_{k}")
-            food_items.append({"item": item, "price": price})
+        total_food = 0
 
-        people_data.append({
-            "name": name,
-            "sessions": sessions,
-            "food": food_items
+        food_count = st.number_input(f"How many food/drink items for {name}?", min_value=0, step=1, key=f"food_count_{i}")
+        for j in range(food_count):
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                item_name = st.text_input(f"  Item {j+1} Name", key=f"item_{i}_{j}")
+            with col2:
+                item_price = st.number_input(f"  Price", min_value=0.0, key=f"price_{i}_{j}")
+            total_food += item_price
+            food_items.append({"name": item_name, "price": item_price})
+
+        people[name] = {
+            "food_items": food_items,
+            "food_total": total_food,
+            "sessions": [],
+            "table_total": 0
+        }
+
+# --- Input: Shared Sessions ---
+st.header("🕒 Table Sessions")
+session_count = st.number_input("Number of Shared Table Sessions:", min_value=0, step=1)
+
+sessions = []
+
+for s in range(session_count):
+    with st.expander(f"Session {s+1}"):
+        minutes = st.number_input("Minutes Played:", min_value=1, key=f"mins_{s}")
+        table_type = st.selectbox("Table Type:", table_types, key=f"type_{s}")
+        shift = st.selectbox("Shift:", shifts, key=f"shift_{s}")
+        participants = st.multiselect("Participants:", options=list(people.keys()), key=f"participants_{s}")
+
+        rate_key = f"{table_type}_{shift}"
+        rate = custom_rates.get(rate_key, 0)
+        total_cost = minutes * rate
+        cost_per_person = total_cost / len(participants) if participants else 0
+
+        sessions.append({
+            "minutes": minutes,
+            "table_type": table_type,
+            "shift": shift,
+            "rate": rate,
+            "participants": participants,
+            "total_cost": total_cost,
+            "split_cost": cost_per_person
         })
 
-# --- Service Charge ---
-st.header("3. Service Charge")
-service_charge = st.number_input("Total Service Charge (Rp)", min_value=0.0, step=100.0)
+# --- Input: Service Fee ---
+st.header("💰 Other Charges")
+service_cost = st.number_input("Total Service Cost:", min_value=0.0)
+service_per_person = service_cost / num_people if num_people > 0 else 0
+
+tax_rate = 0.10
 
 # --- Calculate Bills ---
-if st.button("💸 Calculate Split"):
-    st.header("4. Bill Summary")
-    service_per_person = service_charge / len(people_data)
+if st.button("💸 Calculate Bill"):
+    # Assign table costs
+    for session in sessions:
+        for name in session["participants"]:
+            if name in people:
+                people[name]["sessions"].append(session)
+                people[name]["table_total"] += session["split_cost"]
 
-    for person in people_data:
-        name = person["name"]
-        table_cost = 0
-        for session in person["sessions"]:
-            rate = rates[session["table_type"]][session["shift"]]
-            table_cost += session["minutes"] * rate
-
-        food_total = sum(item["price"] for item in person["food"])
-        subtotal = table_cost + food_total + service_per_person
-        tax = 0.10 * subtotal
-        total = subtotal + tax
-
+    # Show Results
+    st.header("🧾 Final Bill")
+    for name, data in people.items():
         st.subheader(f"{name}")
-        st.write(f"🎱 Table Cost: Rp {table_cost:,.0f}")
-        st.write(f"🍴 Food & Drinks: Rp {food_total:,.0f}")
-        st.write(f"🛎️ Service Share: Rp {service_per_person:,.0f}")
-        st.write(f"💰 Subtotal: Rp {subtotal:,.0f}")
-        st.write(f"📊 Tax (10%): Rp {tax:,.0f}")
-        st.write(f"✅ **Total: Rp {total:,.0f}**")
+        table_total = data["table_total"]
+        food_total = data["food_total"]
+        subtotal = table_total + food_total
+        subtotal_with_service = subtotal + service_per_person
+        total = subtotal_with_service * (1 + tax_rate)
 
+        with st.expander("🔍 Breakdown"):
+            st.write("**Table Sessions:**")
+            for session in data["sessions"]:
+                st.write(f"{session['minutes']} min @ Rp{session['rate']} ({session['table_type']}, {session['shift']})")
+                st.write(f"  → Shared with: {', '.join(session['participants'])}")
+                st.write(f"  → Share: Rp{session['split_cost']:.0f}")
+            st.write("**Food & Drinks:**")
+            for item in data["food_items"]:
+                st.write(f"- {item['name']}: Rp{item['price']:.0f}")
+            st.write(f"**Service Cost Share:** Rp{service_per_person:.0f}")
+            st.write(f"**Tax (10%) applied to subtotal+service.**")
+
+        st.success(f"**Total: Rp{total:,.0f}**")
